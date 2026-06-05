@@ -62,6 +62,25 @@ create table if not exists public.rosters (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.attendance_records (
+  id uuid primary key default gen_random_uuid(),
+  employee_id uuid not null references public.employees(id) on delete cascade,
+  client_id uuid not null references public.clients(id) on delete cascade,
+  roster_id uuid references public.rosters(id) on delete set null,
+  check_in_time timestamptz not null,
+  check_out_time timestamptz,
+  check_in_lat numeric,
+  check_in_lng numeric,
+  check_out_lat numeric,
+  check_out_lng numeric,
+  check_in_photo_url text,
+  check_out_photo_url text,
+  remarks text,
+  status text not null default 'checked_in' check (status in ('checked_in', 'checked_out', 'issue')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists public.inspection_reports (
   id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients(id) on delete cascade,
@@ -123,6 +142,7 @@ create table if not exists public.invoice_items (
 alter table public.clients enable row level security;
 alter table public.employees enable row level security;
 alter table public.rosters enable row level security;
+alter table public.attendance_records enable row level security;
 alter table public.inspection_reports enable row level security;
 alter table public.quotations enable row level security;
 alter table public.quotation_items enable row level security;
@@ -132,6 +152,7 @@ alter table public.invoice_items enable row level security;
 create policy "Authenticated users manage clients" on public.clients for all to authenticated using (true) with check (true);
 create policy "Authenticated users manage employees" on public.employees for all to authenticated using (true) with check (true);
 create policy "Authenticated users manage rosters" on public.rosters for all to authenticated using (true) with check (true);
+create policy "Authenticated users manage attendance records" on public.attendance_records for all to authenticated using (true) with check (true);
 create policy "Authenticated users manage inspection reports" on public.inspection_reports for all to authenticated using (true) with check (true);
 create policy "Authenticated users manage quotations" on public.quotations for all to authenticated using (true) with check (true);
 create policy "Authenticated users manage quotation items" on public.quotation_items for all to authenticated using (true) with check (true);
@@ -158,3 +179,24 @@ with check (bucket_id = 'inspection-photos');
 create policy "Authenticated users delete inspection photos"
 on storage.objects for delete to authenticated
 using (bucket_id = 'inspection-photos');
+
+insert into storage.buckets (id, name, public)
+values ('attendance-photos', 'attendance-photos', true)
+on conflict (id) do update set public = true;
+
+create policy "Authenticated users upload attendance photos"
+on storage.objects for insert to authenticated
+with check (bucket_id = 'attendance-photos');
+
+create policy "Public attendance photos are readable"
+on storage.objects for select to public
+using (bucket_id = 'attendance-photos');
+
+create policy "Authenticated users update attendance photos"
+on storage.objects for update to authenticated
+using (bucket_id = 'attendance-photos')
+with check (bucket_id = 'attendance-photos');
+
+create policy "Authenticated users delete attendance photos"
+on storage.objects for delete to authenticated
+using (bucket_id = 'attendance-photos');

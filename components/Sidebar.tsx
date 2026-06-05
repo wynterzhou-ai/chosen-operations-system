@@ -7,7 +7,11 @@ import {
   ClipboardCheck,
   FileText,
   Gauge,
+  ListChecks,
+  MapPinCheck,
   Receipt,
+  ShieldAlert,
+  WalletCards,
   Users,
   UserRound
 } from "lucide-react";
@@ -17,6 +21,10 @@ const navItems = [
   { href: "/dashboard", label: "Dashboard", icon: Gauge },
   { href: "/clients", label: "Clients", icon: Users },
   { href: "/employees", label: "Employees", icon: UserRound },
+  { href: "/attendance", label: "Attendance", icon: MapPinCheck },
+  { href: "/checklists", label: "Checklists", icon: ListChecks },
+  { href: "/compliance", label: "Compliance", icon: ShieldAlert },
+  { href: "/payroll", label: "Payroll", icon: WalletCards },
   { href: "/rosters", label: "Rosters", icon: CalendarDays },
   { href: "/inspections", label: "Inspections", icon: ClipboardCheck },
   { href: "/quotations", label: "Quotations", icon: FileText },
