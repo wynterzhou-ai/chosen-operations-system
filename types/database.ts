@@ -41,6 +41,9 @@ export type Employee = {
   sdl_applicable?: boolean | null;
   bank_name?: string | null;
   bank_account?: string | null;
+  nric_fin?: string | null;
+  payment_method?: string | null;
+  bank_branch?: string | null;
   pwm_grade?: string | null;
   date_of_birth?: string | null;
   citizenship_type?: CitizenshipType | string | null;
@@ -225,3 +228,4 @@ export type CpfRateRule = {
   notes: string | null;
   created_at: string;
 };
+

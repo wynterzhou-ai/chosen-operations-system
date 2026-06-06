@@ -15,7 +15,7 @@ export default async function PayrollPage() {
   return (
     <AppShell>
       <div className="mb-6">
-        <p className="label">V2.5</p>
+        <p className="label">V2.8</p>
         <h1 className="text-2xl font-semibold text-ink">Payroll</h1>
       </div>
 
@@ -34,3 +34,4 @@ export default async function PayrollPage() {
     </AppShell>
   );
 }
+

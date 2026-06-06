@@ -43,6 +43,9 @@ export default function EmployeeForm({ employee }: EmployeeFormProps) {
     sdl_applicable: employee?.sdl_applicable ?? true,
     bank_name: employee?.bank_name ?? "",
     bank_account: employee?.bank_account ?? "",
+    nric_fin: employee?.nric_fin ?? "",
+    payment_method: employee?.payment_method ?? "bank_giro",
+    bank_branch: employee?.bank_branch ?? "",
     pwm_grade: employee?.pwm_grade ?? "",
     date_of_birth: employee?.date_of_birth ?? "",
     citizenship_type: employee?.citizenship_type ?? "singapore_citizen",
@@ -73,6 +76,9 @@ export default function EmployeeForm({ employee }: EmployeeFormProps) {
       phone: form.phone || null,
       bank_name: form.bank_name || null,
       bank_account: form.bank_account || null,
+      nric_fin: form.nric_fin || null,
+      payment_method: form.payment_method || "bank_giro",
+      bank_branch: form.bank_branch || null,
       pwm_grade: form.pwm_grade || null,
       date_of_birth: form.date_of_birth || null,
       citizenship_type: form.citizenship_type || "singapore_citizen",
@@ -194,10 +200,12 @@ export default function EmployeeForm({ employee }: EmployeeFormProps) {
               <option value="false">No</option>
             </select>
           </div>
+
           <div>
             <label className="label">Bank Name</label>
             <input className="field mt-1" value={form.bank_name} onChange={(event) => updateField("bank_name", event.target.value)} />
           </div>
+
           <div>
             <label className="label">Bank Account</label>
             <input className="field mt-1" value={form.bank_account} onChange={(event) => updateField("bank_account", event.target.value)} />
@@ -234,6 +242,28 @@ export default function EmployeeForm({ employee }: EmployeeFormProps) {
         </div>
       </div>
 
+      <div className="border-t border-line pt-4">
+        <h2 className="font-semibold text-ink">Payroll Export Details</h2>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <div>
+            <label className="label">NRIC / FIN</label>
+            <input className="field mt-1" value={form.nric_fin} onChange={(event) => updateField("nric_fin", event.target.value)} />
+          </div>
+          <div>
+            <label className="label">Payment Method</label>
+            <select className="field mt-1" value={form.payment_method} onChange={(event) => updateField("payment_method", event.target.value)}>
+              <option value="bank_giro">Bank GIRO</option>
+              <option value="paynow">PayNow</option>
+              <option value="cheque">Cheque</option>
+              <option value="cash">Cash</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Bank Branch</label>
+            <input className="field mt-1" value={form.bank_branch} onChange={(event) => updateField("bank_branch", event.target.value)} />
+          </div>
+        </div>
+      </div>
       <div className="border-t border-line pt-4">
         <h2 className="font-semibold text-ink">Compliance Expiries</h2>
         <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -275,3 +305,5 @@ export default function EmployeeForm({ employee }: EmployeeFormProps) {
     </form>
   );
 }
+
+

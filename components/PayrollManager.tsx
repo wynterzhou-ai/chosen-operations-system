@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Calculator, CheckCircle2, Download, PlayCircle, Save, WalletCards } from "lucide-react";
+import jsPDF from "jspdf";
+import { AlertTriangle, Calculator, CheckCircle2, Download, FileArchive, FileText, PlayCircle, Save, WalletCards } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { formatCurrency, formatDate } from "@/lib/format";
 import type { CpfRateRule, Employee } from "@/types/database";
@@ -145,6 +146,105 @@ function csvEscape(value: unknown) {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
+function downloadCsv(headers: string[], rows: unknown[][], fileName: string) {
+  const csv = [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n");
+  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), fileName);
+}
+
+function sanitizeFileName(value: string) {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "-");
+}
+
+function createPayslipPdf(record: PayrollRecord, employee: PayrollEmployee | undefined, period: PayrollPeriod | null) {
+  const doc = new jsPDF();
+  const otPay = toNumber(record.overtime_hours) * toNumber(record.overtime_rate);
+
+  doc.setFontSize(16);
+  doc.text("Chosen Facility Services Pte Ltd", 14, 20);
+  doc.setFontSize(13);
+  doc.text("Payslip", 14, 31);
+  doc.setFontSize(10);
+  doc.text(`Employee Name: ${employee?.name ?? record.employees?.name ?? "Employee"}`, 14, 45);
+  doc.text(`NRIC/FIN: ${employee?.nric_fin ?? "-"}`, 14, 53);
+  doc.text(`Payroll Period: ${period?.period_name ?? "-"}`, 14, 61);
+
+  const rows: [string, number][] = [
+    ["Basic Salary", record.basic_salary],
+    ["OT", otPay],
+    ["Allowance", record.allowance],
+    ["Deduction", record.deduction],
+    ["CPF Employee", record.cpf_employee],
+    ["CPF Employer", record.cpf_employer],
+    ["SDL", record.sdl],
+    ["Gross Pay", record.gross_pay],
+    ["Net Pay", record.net_pay]
+  ];
+
+  let y = 80;
+  rows.forEach(([label, value]) => {
+    doc.text(label, 18, y);
+    doc.text(formatCurrency(toNumber(value)), 150, y);
+    y += 10;
+  });
+
+  return doc;
+}
+
+const crcTable = Array.from({ length: 256 }, (_, index) => {
+  let current = index;
+  for (let bit = 0; bit < 8; bit += 1) current = current & 1 ? 0xedb88320 ^ (current >>> 1) : current >>> 1;
+  return current >>> 0;
+});
+
+function crc32(bytes: Uint8Array) {
+  let crc = 0xffffffff;
+  bytes.forEach((byte) => {
+    crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  });
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function writeUint16(output: number[], value: number) {
+  output.push(value & 0xff, (value >>> 8) & 0xff);
+}
+
+function writeUint32(output: number[], value: number) {
+  output.push(value & 0xff, (value >>> 8) & 0xff, (value >>> 16) & 0xff, (value >>> 24) & 0xff);
+}
+
+function createZip(files: { name: string; bytes: Uint8Array }[]) {
+  const encoder = new TextEncoder();
+  const output: number[] = [];
+  const centralDirectory: number[] = [];
+
+  files.forEach((file) => {
+    const nameBytes = encoder.encode(file.name);
+    const checksum = crc32(file.bytes);
+    const offset = output.length;
+    writeUint32(output, 0x04034b50); writeUint16(output, 20); writeUint16(output, 0); writeUint16(output, 0); writeUint16(output, 0); writeUint16(output, 0);
+    writeUint32(output, checksum); writeUint32(output, file.bytes.length); writeUint32(output, file.bytes.length); writeUint16(output, nameBytes.length); writeUint16(output, 0);
+    output.push(...nameBytes, ...file.bytes);
+    writeUint32(centralDirectory, 0x02014b50); writeUint16(centralDirectory, 20); writeUint16(centralDirectory, 20); writeUint16(centralDirectory, 0); writeUint16(centralDirectory, 0); writeUint16(centralDirectory, 0); writeUint16(centralDirectory, 0);
+    writeUint32(centralDirectory, checksum); writeUint32(centralDirectory, file.bytes.length); writeUint32(centralDirectory, file.bytes.length); writeUint16(centralDirectory, nameBytes.length); writeUint16(centralDirectory, 0); writeUint16(centralDirectory, 0); writeUint16(centralDirectory, 0); writeUint16(centralDirectory, 0); writeUint32(centralDirectory, 0); writeUint32(centralDirectory, offset);
+    centralDirectory.push(...nameBytes);
+  });
+
+  const centralOffset = output.length;
+  output.push(...centralDirectory);
+  writeUint32(output, 0x06054b50); writeUint16(output, 0); writeUint16(output, 0); writeUint16(output, files.length); writeUint16(output, files.length); writeUint32(output, centralDirectory.length); writeUint32(output, centralOffset); writeUint16(output, 0);
+  return new Blob([new Uint8Array(output)], { type: "application/zip" });
+}
 function calculateAge(dateOfBirth: string, asOfDate: string) {
   const dob = new Date(dateOfBirth);
   const asOf = new Date(asOfDate);
@@ -222,6 +322,20 @@ export default function PayrollManager({ periods, employees, initialRecords, cpf
     );
   }, [selectedRecords]);
 
+  const totalCpf = totals.cpf_employee + totals.cpf_employer;
+
+  function getValidationWarnings(record: PayrollRecord) {
+    const employee = employeesById.get(record.employee_id);
+    const warnings: string[] = [];
+    if (!employee?.bank_account) warnings.push("Missing Bank Account");
+    if (!employee?.nric_fin) warnings.push("Missing NRIC/FIN");
+    if (toNumber(record.cpf_employee) <= 0 || toNumber(record.cpf_employer) <= 0) warnings.push("Missing CPF Data");
+    return warnings;
+  }
+
+  const validationWarnings = selectedRecords.flatMap((record) =>
+    getValidationWarnings(record).map((warning) => ({ record, warning }))
+  );
   function updatePeriodForm(field: keyof PeriodForm, value: string) {
     setPeriodForm((current) => ({ ...current, [field]: value }));
   }
@@ -475,51 +589,66 @@ export default function PayrollManager({ periods, employees, initialRecords, cpf
     router.refresh();
   }
 
-  function exportCsv() {
-    const headers = [
-      "Employee Name",
-      "Role",
-      "Basic Salary",
-      "Normal Hours",
-      "OT Hours",
-      "Gross Pay",
-      "CPF Employee",
-      "CPF Employer",
-      "SDL",
-      "Deduction",
-      "Net Pay",
-      "Employer Cost",
-      "Remarks"
-    ];
-
-    const rows = selectedRecords.map((record) => [
-      record.employees?.name ?? "",
-      record.employees?.role ?? "",
-      record.basic_salary,
-      record.normal_hours,
-      record.overtime_hours,
-      record.gross_pay,
-      record.cpf_employee,
-      record.cpf_employer,
-      record.sdl,
-      record.deduction,
-      record.net_pay,
-      record.employer_cost,
-      record.remarks
-    ]);
-
-    const csv = [headers, ...rows].map((row) => row.map(csvEscape).join(",")).join("\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = `payroll-${selectedPeriod?.period_name ?? "period"}.csv`;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+  function payrollExportRows() {
+    return selectedRecords.map((record) => {
+      const employee = employeesById.get(record.employee_id);
+      const otPay = toNumber(record.overtime_hours) * toNumber(record.overtime_rate);
+      return [
+        employee?.name ?? record.employees?.name ?? "",
+        employee?.nric_fin ?? "",
+        employee?.bank_name ?? "",
+        employee?.bank_account ?? "",
+        record.basic_salary,
+        otPay,
+        record.allowance,
+        record.deduction,
+        record.cpf_employee,
+        record.cpf_employer,
+        record.sdl,
+        record.gross_pay,
+        record.net_pay,
+        record.employer_cost
+      ];
+    });
   }
 
+  function exportCsv() {
+    downloadCsv(
+      ["Employee Name", "NRIC/FIN", "Bank Name", "Bank Account", "Basic Salary", "OT", "Allowance", "Deduction", "CPF Employee", "CPF Employer", "SDL", "Gross Pay", "Net Pay", "Employer Cost"],
+      payrollExportRows(),
+      `payroll-${selectedPeriod?.period_name ?? "period"}.csv`
+    );
+  }
+
+  function exportBankGiroCsv() {
+    downloadCsv(
+      ["Employee Name", "Bank Name", "Bank Account", "Net Pay"],
+      selectedRecords.map((record) => {
+        const employee = employeesById.get(record.employee_id);
+        return [employee?.name ?? record.employees?.name ?? "", employee?.bank_name ?? "", employee?.bank_account ?? "", record.net_pay];
+      }),
+      `bank-giro-${selectedPeriod?.period_name ?? "period"}.csv`
+    );
+  }
+
+  function exportPayslip(record: PayrollRecord) {
+    const employee = employeesById.get(record.employee_id);
+    const doc = createPayslipPdf(record, employee, selectedPeriod);
+    doc.save(`payslip-${sanitizeFileName(selectedPeriod?.period_name ?? "period")}-${sanitizeFileName(employee?.name ?? record.employees?.name ?? "employee")}.pdf`);
+  }
+
+  function exportBulkPayslips() {
+    if (!selectedRecords.length) return;
+    const files = selectedRecords.map((record) => {
+      const employee = employeesById.get(record.employee_id);
+      const doc = createPayslipPdf(record, employee, selectedPeriod);
+      return {
+        name: `payslip-${sanitizeFileName(employee?.name ?? record.employees?.name ?? "employee")}.pdf`,
+        bytes: new Uint8Array(doc.output("arraybuffer"))
+      };
+    });
+    downloadBlob(createZip(files), `payslips-${sanitizeFileName(selectedPeriod?.period_name ?? "period")}.zip`);
+  }
   return (
     <div className="space-y-6">
       <div className="grid gap-6 xl:grid-cols-[420px_1fr]">
@@ -597,9 +726,22 @@ export default function PayrollManager({ periods, employees, initialRecords, cpf
               <Save size={16} />
               Save
             </button>
+
+          </div>
+
+
+          <div className="mt-3 flex flex-wrap gap-2">
             <button className="btn-secondary" type="button" onClick={exportCsv} disabled={!selectedRecords.length}>
               <Download size={16} />
-              CSV
+              Payroll CSV
+            </button>
+            <button className="btn-secondary" type="button" onClick={exportBankGiroCsv} disabled={!selectedRecords.length}>
+              <Download size={16} />
+              Bank GIRO CSV
+            </button>
+            <button className="btn-secondary" type="button" onClick={exportBulkPayslips} disabled={!selectedRecords.length}>
+              <FileArchive size={16} />
+              Bulk Payslips ZIP
             </button>
           </div>
 
@@ -621,35 +763,47 @@ export default function PayrollManager({ periods, employees, initialRecords, cpf
         </section>
       </div>
 
-      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="panel p-4">
-          <p className="label">Gross Pay</p>
-          <p className="mt-2 font-semibold">{formatCurrency(totals.gross_pay)}</p>
+          <p className="label">Total Payroll Cost</p>
+          <p className="mt-2 font-semibold">{formatCurrency(totals.employer_cost)}</p>
         </div>
         <div className="panel p-4">
-          <p className="label">CPF Employee</p>
-          <p className="mt-2 font-semibold">{formatCurrency(totals.cpf_employee)}</p>
+          <p className="label">Total CPF</p>
+          <p className="mt-2 font-semibold">{formatCurrency(totalCpf)}</p>
         </div>
         <div className="panel p-4">
-          <p className="label">CPF Employer</p>
-          <p className="mt-2 font-semibold">{formatCurrency(totals.cpf_employer)}</p>
-        </div>
-        <div className="panel p-4">
-          <p className="label">SDL</p>
+          <p className="label">Total SDL</p>
           <p className="mt-2 font-semibold">{formatCurrency(totals.sdl)}</p>
         </div>
         <div className="panel p-4">
-          <p className="label">Net Pay</p>
+          <p className="label">Total Net Salary</p>
           <p className="mt-2 font-semibold">{formatCurrency(totals.net_pay)}</p>
-        </div>
-        <div className="panel p-4">
-          <p className="label">Employer Cost</p>
-          <p className="mt-2 font-semibold">{formatCurrency(totals.employer_cost)}</p>
         </div>
       </section>
 
+      {validationWarnings.length ? (
+        <section className="panel p-5">
+          <div className="flex items-center gap-2 text-amber-800">
+            <AlertTriangle size={18} />
+            <h2 className="font-semibold">Payroll Export Validation</h2>
+          </div>
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            {validationWarnings.map(({ record, warning }, index) => {
+              const employee = employeesById.get(record.employee_id);
+              return (
+                <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800" key={`${record.employee_id}-${warning}-${index}`}>
+                  {(employee?.name ?? record.employees?.name ?? "Employee")}: {warning}
+                </p>
+              );
+            })}
+          </div>
+        </section>
+      ) : null}
       <section className="space-y-4">
         {selectedRecords.map((record) => {
+          const employee = employeesById.get(record.employee_id);
+          const recordWarnings = getValidationWarnings(record);
           const cpfSuggestion = cpfSuggestions[record.employee_id];
           const hasCpfWarnings = Boolean(cpfSuggestion?.warnings.length);
 
@@ -665,6 +819,14 @@ export default function PayrollManager({ periods, employees, initialRecords, cpf
                 <p className="font-semibold text-ink">{formatCurrency(record.net_pay)}</p>
               </div>
             </div>
+
+            {recordWarnings.length ? (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {recordWarnings.map((warning) => (
+                  <span className="rounded-md bg-amber-50 px-2 py-1 text-xs font-medium text-amber-800" key={warning}>{warning}</span>
+                ))}
+              </div>
+            ) : null}
 
             <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-6">
               {[
@@ -732,7 +894,7 @@ export default function PayrollManager({ periods, employees, initialRecords, cpf
               </div>
             ) : null}
 
-            <div className="mt-4 grid gap-3 border-t border-line pt-4 text-sm sm:grid-cols-3">
+            <div className="mt-4 grid gap-3 border-t border-line pt-4 text-sm sm:grid-cols-4">
               <div>
                 <span className="text-slate-500">Gross Pay</span>
                 <p className="font-semibold">{formatCurrency(record.gross_pay)}</p>
@@ -744,6 +906,12 @@ export default function PayrollManager({ periods, employees, initialRecords, cpf
               <div>
                 <span className="text-slate-500">Employer Cost</span>
                 <p className="font-semibold">{formatCurrency(record.employer_cost)}</p>
+              </div>
+              <div>
+                <button className="btn-secondary w-full" type="button" onClick={() => exportPayslip(record)}>
+                  <FileText size={16} />
+                  Payslip PDF
+                </button>
               </div>
             </div>
           </article>
@@ -759,3 +927,13 @@ export default function PayrollManager({ periods, employees, initialRecords, cpf
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
