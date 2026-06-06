@@ -13,6 +13,22 @@ export type Client = {
   created_at: string;
 };
 
+export type ClientUserRole = "client_viewer" | "client_admin";
+export type ClientUserStatus = "active" | "inactive";
+
+export type ClientUser = {
+  id: string;
+  client_id: string;
+  auth_user_id: string;
+  email: string;
+  role: ClientUserRole | string;
+  status: ClientUserStatus | string;
+  created_at: string;
+  updated_at: string;
+  clients?: Client | null;
+};
+
+
 export type Employee = {
   id: string;
   name: string;
